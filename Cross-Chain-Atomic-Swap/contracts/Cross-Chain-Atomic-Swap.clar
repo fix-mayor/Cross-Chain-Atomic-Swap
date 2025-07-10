@@ -199,3 +199,26 @@
     (ok true)
   )
 )
+
+;; Refund an expired or unclaimed swap
+(define-public (refund-swap (swap-id (buff 32)))
+  (let (
+    (swap (unwrap! (map-get? swaps { swap-id: swap-id }) (err ERR-SWAP-NOT-FOUND)))
+    (refunder tx-sender)
+  )
+    ;; Validation checks
+    (asserts! (is-eq refunder (get initiator swap)) (err ERR-UNAUTHORIZED))
+    (asserts! (not (get claimed swap)) (err ERR-ALREADY-CLAIMED))
+    (asserts! (not (get refunded swap)) (err ERR-INVALID-REFUND))
+    (asserts! (is-swap-expired (get expiration-height swap)) (err ERR-TIMELOCK-ACTIVE))
+    
+    ;; Update the swap to refunded status
+    (map-set swaps
+      { swap-id: swap-id }
+      (merge swap { refunded: true })
+    )
+    
+    ;; Return success
+    (ok true)
+  )
+)
