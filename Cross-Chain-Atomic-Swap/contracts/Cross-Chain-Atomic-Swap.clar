@@ -295,3 +295,67 @@
     (ok pool-id)
   )
 )
+
+;; Join a mixing pool for enhanced privacy
+(define-public (join-mixing-pool (pool-id (buff 32)) (amount uint) (blinded-output-address (buff 64)))
+  (let (
+    (pool (unwrap! (map-get? mixing-pools { pool-id: pool-id }) (err ERR-MIXER-NOT-FOUND)))
+    (participant tx-sender)
+    (current-height stacks-block-height)
+    (participant-count (get participant-count pool))
+    (new-count (+ participant-count u1))
+  )
+    ;; Validation
+    (asserts! (>= amount (get min-amount pool)) (err ERR-INSUFFICIENT-FUNDS))
+    (asserts! (<= amount (get max-amount pool)) (err ERR-INSUFFICIENT-FUNDS))
+    (asserts! (not (get active pool)) (err ERR-ALREADY-CLAIMED))
+    (asserts! (is-participant-count-valid participant-count) (err ERR-PARTICIPANT-LIMIT-REACHED))
+    
+    ;; Add participant to the pool
+    (map-set mixer-participants
+      { pool-id: pool-id, participant-id: participant-count }
+      {
+        participant: participant,
+        amount: amount,
+        blinded-output-address: blinded-output-address,
+        joined-height: current-height,
+        withdrawn: false
+      }
+    )
+    
+    ;; Update pool info
+    (map-set mixing-pools
+      { pool-id: pool-id }
+      (merge pool {
+        total-amount: (+ (get total-amount pool) amount),
+        participant-count: new-count,
+        active: (>= new-count (get activation-threshold pool))
+      })
+    )
+    
+    ;; Return success
+    (ok true)
+  )
+)
+
+;; Activate a mixing pool when threshold is reached
+(define-public (activate-mixing-pool (pool-id (buff 32)))
+  (let (
+    (pool (unwrap! (map-get? mixing-pools { pool-id: pool-id }) (err ERR-MIXER-NOT-FOUND)))
+    (current-height stacks-block-height)
+  )
+    ;; Check if activation requirements are met
+    (asserts! (>= (get participant-count pool) (get activation-threshold pool)) (err ERR-NOT-CLAIMABLE))
+    (asserts! (not (get active pool)) (err ERR-ALREADY-CLAIMED))
+    
+    ;; Update pool to active status
+    (map-set mixing-pools
+      { pool-id: pool-id }
+      (merge pool { active: true })
+    )
+    
+    ;; Return success
+    (ok true)
+  )
+)
+
