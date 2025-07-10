@@ -151,3 +151,51 @@
       (map-get? swaps { swap-id: swap-id }))) required)
   )
 )
+
+;; Check if participant count is under the limit
+(define-private (is-participant-count-valid (count uint))
+  (< count MAX-PARTICIPANTS-PER-MIXER)
+)
+
+;; Simulate ZKP verification
+;; In a real implementation, this would connect to a ZKP verification system
+(define-private (verify-zk-proof (proof-data (buff 1024)) (swap-details (buff 256)))
+  ;; This is a simplified stand-in for actual ZK proof verification
+  ;; In production, this would validate the cryptographic proof
+  (begin
+    ;; Check if the proof data is not empty (simplified verification)
+    (not (is-eq proof-data 0x))
+  )
+)
+
+;; Claim a swap using the hash preimage
+(define-public (claim-swap (swap-id (buff 32)) (preimage (buff 32)))
+  (let (
+    (swap (unwrap! (map-get? swaps { swap-id: swap-id }) (err ERR-SWAP-NOT-FOUND)))
+    (claimer tx-sender)
+  )
+    ;; Validation checks
+    (asserts! (is-eq claimer (get participant swap)) (err ERR-UNAUTHORIZED))
+    (asserts! (not (get claimed swap)) (err ERR-ALREADY-CLAIMED))
+    (asserts! (not (get refunded swap)) (err ERR-INVALID-REFUND))
+    (asserts! (verify-hash preimage (get hash-lock swap)) (err ERR-INVALID-HASH))
+    (asserts! (is-timelock-valid (get time-lock swap)) (err ERR-TIMELOCK-EXPIRED))
+    (asserts! (not (is-swap-expired (get expiration-height swap))) (err ERR-SWAP-EXPIRED))
+    
+    ;; For multi-sig swaps, verify we have enough signatures
+    (if (> (get multi-sig-required swap) u1)
+      (asserts! (verify-multi-sig swap-id (get multi-sig-required swap) (get multi-sig-provided swap)) 
+        (err ERR-INVALID-SIGNATURE))
+      true
+    )
+    
+    ;; Update the swap to claimed status
+    (map-set swaps
+      { swap-id: swap-id }
+      (merge swap { claimed: true })
+    )
+    
+    ;; Return success
+    (ok true)
+  )
+)
