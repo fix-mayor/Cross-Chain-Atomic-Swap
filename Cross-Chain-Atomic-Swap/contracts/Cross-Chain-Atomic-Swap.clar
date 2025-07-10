@@ -253,3 +253,45 @@
     (ok true)
   )
 )
+
+;; Create a new mixing pool for enhanced privacy
+(define-public (create-mixing-pool 
+  (min-amount uint) 
+  (max-amount uint) 
+  (activation-threshold uint)
+  (execution-delay uint)
+  (execution-window uint)
+)
+  (let (
+    (creator tx-sender)
+    (current-height stacks-block-height)
+    (pool-id (sha256 (concat 
+      (unwrap-panic (to-consensus-buff? creator))
+      (unwrap-panic (to-consensus-buff? current-height))
+    )))
+  )
+    ;; Validation
+    (asserts! (>= min-amount MIN-SWAP-AMOUNT) (err ERR-INSUFFICIENT-FUNDS))
+    (asserts! (>= max-amount min-amount) (err ERR-INSUFFICIENT-FUNDS))
+    (asserts! (> activation-threshold u0) (err ERR-INVALID-PARTICIPANT))
+    
+    ;; Create the pool
+    (map-set mixing-pools
+      { pool-id: pool-id }
+      {
+        total-amount: u0,
+        participant-count: u0,
+        min-amount: min-amount,
+        max-amount: max-amount,
+        activation-threshold: activation-threshold,
+        active: false,
+        creation-height: current-height,
+        execution-delay: execution-delay,
+        execution-window: execution-window
+      }
+    )
+    
+    ;; Return the pool ID
+    (ok pool-id)
+  )
+)
