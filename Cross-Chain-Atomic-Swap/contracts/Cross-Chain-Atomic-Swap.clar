@@ -253,3 +253,177 @@
     (ok true)
   )
 )
+
+;; Create a new mixing pool for enhanced privacy
+(define-public (create-mixing-pool 
+  (min-amount uint) 
+  (max-amount uint) 
+  (activation-threshold uint)
+  (execution-delay uint)
+  (execution-window uint)
+)
+  (let (
+    (creator tx-sender)
+    (current-height stacks-block-height)
+    (pool-id (sha256 (concat 
+      (unwrap-panic (to-consensus-buff? creator))
+      (unwrap-panic (to-consensus-buff? current-height))
+    )))
+  )
+    ;; Validation
+    (asserts! (>= min-amount MIN-SWAP-AMOUNT) (err ERR-INSUFFICIENT-FUNDS))
+    (asserts! (>= max-amount min-amount) (err ERR-INSUFFICIENT-FUNDS))
+    (asserts! (> activation-threshold u0) (err ERR-INVALID-PARTICIPANT))
+    
+    ;; Create the pool
+    (map-set mixing-pools
+      { pool-id: pool-id }
+      {
+        total-amount: u0,
+        participant-count: u0,
+        min-amount: min-amount,
+        max-amount: max-amount,
+        activation-threshold: activation-threshold,
+        active: false,
+        creation-height: current-height,
+        execution-delay: execution-delay,
+        execution-window: execution-window
+      }
+    )
+    
+    ;; Return the pool ID
+    (ok pool-id)
+  )
+)
+
+;; Join a mixing pool for enhanced privacy
+(define-public (join-mixing-pool (pool-id (buff 32)) (amount uint) (blinded-output-address (buff 64)))
+  (let (
+    (pool (unwrap! (map-get? mixing-pools { pool-id: pool-id }) (err ERR-MIXER-NOT-FOUND)))
+    (participant tx-sender)
+    (current-height stacks-block-height)
+    (participant-count (get participant-count pool))
+    (new-count (+ participant-count u1))
+  )
+    ;; Validation
+    (asserts! (>= amount (get min-amount pool)) (err ERR-INSUFFICIENT-FUNDS))
+    (asserts! (<= amount (get max-amount pool)) (err ERR-INSUFFICIENT-FUNDS))
+    (asserts! (not (get active pool)) (err ERR-ALREADY-CLAIMED))
+    (asserts! (is-participant-count-valid participant-count) (err ERR-PARTICIPANT-LIMIT-REACHED))
+    
+    ;; Add participant to the pool
+    (map-set mixer-participants
+      { pool-id: pool-id, participant-id: participant-count }
+      {
+        participant: participant,
+        amount: amount,
+        blinded-output-address: blinded-output-address,
+        joined-height: current-height,
+        withdrawn: false
+      }
+    )
+    
+    ;; Update pool info
+    (map-set mixing-pools
+      { pool-id: pool-id }
+      (merge pool {
+        total-amount: (+ (get total-amount pool) amount),
+        participant-count: new-count,
+        active: (>= new-count (get activation-threshold pool))
+      })
+    )
+    
+    ;; Return success
+    (ok true)
+  )
+)
+
+;; Activate a mixing pool when threshold is reached
+(define-public (activate-mixing-pool (pool-id (buff 32)))
+  (let (
+    (pool (unwrap! (map-get? mixing-pools { pool-id: pool-id }) (err ERR-MIXER-NOT-FOUND)))
+    (current-height stacks-block-height)
+  )
+    ;; Check if activation requirements are met
+    (asserts! (>= (get participant-count pool) (get activation-threshold pool)) (err ERR-NOT-CLAIMABLE))
+    (asserts! (not (get active pool)) (err ERR-ALREADY-CLAIMED))
+    
+    ;; Update pool to active status
+    (map-set mixing-pools
+      { pool-id: pool-id }
+      (merge pool { active: true })
+    )
+    
+    ;; Return success
+    (ok true)
+  )
+)
+
+;; Extract fees accumulated by the protocol
+(define-public (extract-protocol-fees (recipient principal))
+  (let (
+    (admin (var-get contract-admin))
+    (fee-balance (var-get protocol-fee-balance))
+  )
+    ;; Only contract admin can extract fees
+    (asserts! (is-eq tx-sender admin) (err ERR-UNAUTHORIZED))
+    (asserts! (> fee-balance u0) (err ERR-INSUFFICIENT-FUNDS))
+    
+    ;; Reset fee balance
+    (var-set protocol-fee-balance u0)
+    
+    ;; Return success and balance
+    (ok fee-balance)
+  )
+)
+
+;; Change contract admin
+(define-public (set-contract-admin (new-admin principal))
+  (let (
+    (admin (var-get contract-admin))
+  )
+    ;; Only current admin can change admin
+    (asserts! (is-eq tx-sender admin) (err ERR-UNAUTHORIZED))
+    
+    ;; Set new admin
+    (var-set contract-admin new-admin)
+    
+    ;; Return success
+    (ok true)
+  )
+)
+
+;; Get swap details by ID
+(define-read-only (get-swap-details (swap-id (buff 32)))
+  (map-get? swaps { swap-id: swap-id })
+)
+
+;; Get proof verification status
+(define-read-only (get-proof-status (swap-id (buff 32)))
+  (map-get? confidential-proofs { swap-id: swap-id })
+)
+
+;; Get mixing pool details
+(define-read-only (get-mixing-pool-details (pool-id (buff 32)))
+  (map-get? mixing-pools { pool-id: pool-id })
+)
+
+;; Get multi-sig approval status
+(define-read-only (get-multi-sig-approval (swap-id (buff 32)) (signer principal))
+  (map-get? multi-sig-approvals { swap-id: swap-id, signer: signer })
+)
+
+;; Check if a swap can be claimed
+(define-read-only (is-swap-claimable (swap-id (buff 32)))
+  (match (map-get? swaps { swap-id: swap-id })
+    swap (and 
+           (not (get claimed swap)) 
+           (not (get refunded swap)) 
+           (not (is-swap-expired (get expiration-height swap)))
+           (if (> (get multi-sig-required swap) u1)
+             (>= (get multi-sig-provided swap) (get multi-sig-required swap))
+             true)
+         )
+    false
+  )
+)
